@@ -1,11 +1,13 @@
 class LogoCollection {
     constructor() {
         this.logos = JSON.parse(localStorage.getItem('logos')) || [];
+        this.customCategories = JSON.parse(localStorage.getItem('customCategories')) || {};
         this.init();
     }
 
     init() {
         this.bindEvents();
+        this.updateCategoryFilters();
         this.renderLogos();
     }
 
@@ -18,6 +20,7 @@ class LogoCollection {
         document.getElementById('uploadBtn').addEventListener('click', () => this.openUploadModal());
         document.getElementById('uploadForm').addEventListener('submit', (e) => this.handleUpload(e));
         document.getElementById('logoImage').addEventListener('change', (e) => this.previewImage(e));
+        document.getElementById('logoCategory').addEventListener('change', (e) => this.handleCategoryChange(e));
         
         document.querySelectorAll('.close').forEach(closeBtn => {
             closeBtn.addEventListener('click', (e) => this.closeModal(e));
@@ -75,6 +78,19 @@ class LogoCollection {
         this.renderLogos(filtered);
     }
 
+    handleCategoryChange(e) {
+        const customCategoryInput = document.getElementById('customCategory');
+        if (e.target.value === 'custom') {
+            customCategoryInput.style.display = 'block';
+            customCategoryInput.required = true;
+            customCategoryInput.focus();
+        } else {
+            customCategoryInput.style.display = 'none';
+            customCategoryInput.required = false;
+            customCategoryInput.value = '';
+        }
+    }
+
     openUploadModal() {
         document.getElementById('uploadModal').style.display = 'block';
     }
@@ -84,6 +100,8 @@ class LogoCollection {
         if (e.target.closest('#uploadModal')) {
             document.getElementById('uploadForm').reset();
             document.getElementById('imagePreview').innerHTML = '';
+            document.getElementById('customCategory').style.display = 'none';
+            document.getElementById('customCategory').required = false;
         }
     }
 
@@ -106,13 +124,25 @@ class LogoCollection {
         e.preventDefault();
 
         const name = document.getElementById('logoName').value.trim();
-        const category = document.getElementById('logoCategory').value;
+        const categorySelect = document.getElementById('logoCategory').value;
+        const customCategory = document.getElementById('customCategory').value.trim();
         const description = document.getElementById('logoDescription').value.trim();
         const imageFile = document.getElementById('logoImage').files[0];
 
         if (!name || !imageFile) {
             alert('请填写logo名称并上传图片');
             return;
+        }
+
+        let category = categorySelect;
+        if (categorySelect === 'custom') {
+            if (!customCategory) {
+                alert('请输入新分类名称');
+                return;
+            }
+            category = customCategory;
+            this.customCategories[customCategory] = customCategory;
+            this.saveCustomCategories();
         }
 
         const reader = new FileReader();
@@ -129,10 +159,13 @@ class LogoCollection {
             this.logos.unshift(newLogo);
             this.saveLogos();
             this.renderLogos();
+            this.updateCategoryFilters();
 
             document.getElementById('uploadModal').style.display = 'none';
             document.getElementById('uploadForm').reset();
             document.getElementById('imagePreview').innerHTML = '';
+            document.getElementById('customCategory').style.display = 'none';
+            document.getElementById('customCategory').required = false;
 
             alert('Logo上传成功！');
         };
@@ -166,6 +199,37 @@ class LogoCollection {
             other: '其他'
         };
         return categories[category] || category;
+    }
+
+    updateCategoryFilters() {
+        const categoryFilter = document.getElementById('categoryFilter');
+        const uploadCategorySelect = document.getElementById('logoCategory');
+        
+        const allCategories = new Set([
+            'tech', 'food', 'fashion', 'education', 'other',
+            ...Object.keys(this.customCategories)
+        ]);
+
+        const currentFilterValue = categoryFilter.value;
+        const currentUploadValue = uploadCategorySelect.value;
+
+        categoryFilter.innerHTML = '<option value="all">所有分类</option>';
+        uploadCategorySelect.innerHTML = '';
+
+        allCategories.forEach(cat => {
+            const displayName = this.getCategoryName(cat);
+            categoryFilter.innerHTML += `<option value="${cat}">${displayName}</option>`;
+            uploadCategorySelect.innerHTML += `<option value="${cat}">${displayName}</option>`;
+        });
+
+        uploadCategorySelect.innerHTML += '<option value="custom">➕ 添加新分类</option>';
+
+        categoryFilter.value = currentFilterValue;
+        uploadCategorySelect.value = currentUploadValue;
+    }
+
+    saveCustomCategories() {
+        localStorage.setItem('customCategories', JSON.stringify(this.customCategories));
     }
 
     saveLogos() {
