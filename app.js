@@ -9,6 +9,15 @@ class LogoCollection {
     init() {
         this.bindEvents();
         this.updateCategoryFilters();
+        
+        if (this.githubConfig) {
+            this.loadFromGitHub().catch(error => {
+                console.error('自动加载GitHub数据失败:', error);
+                this.showSyncStatus('自动加载失败: ' + error.message, 'error');
+                setTimeout(() => this.hideSyncStatus(), 5000);
+            });
+        }
+        
         this.renderLogos();
     }
 
@@ -280,85 +289,132 @@ class LogoCollection {
 
     async loadFromGitHub() {
         const { username, repo, token } = this.githubConfig;
-        const response = await fetch(`https://api.github.com/repos/${username}/${repo}/issues?labels=logos&state=all&per_page=100`, {
-            headers: {
-                'Authorization': `token ${token}`,
-                'Accept': 'application/vnd.github.v3+json'
-            }
-        });
-
-        if (!response.ok) {
-            throw new Error('无法加载数据，请检查配置');
-        }
-
-        const issues = await response.json();
         
-        if (issues.length > 0) {
-            const githubLogos = issues.map(issue => {
-                const data = JSON.parse(issue.body);
-                return {
-                    ...data,
-                    githubIssueId: issue.id,
-                    githubIssueNumber: issue.number
-                };
+        try {
+            const response = await fetch(`https://api.github.com/repos/${username}/${repo}/issues?labels=logos&state=all&per_page=100`, {
+                headers: {
+                    'Authorization': `token ${token}`,
+                    'Accept': 'application/vnd.github.v3+json'
+                }
             });
 
-            this.logos = githubLogos;
-            this.saveLogos();
-            this.renderLogos();
-            this.updateCategoryFilters();
+            if (!response.ok) {
+                const errorData = await response.json().catch(() => ({}));
+                throw new Error(errorData.message || `HTTP ${response.status}: ${response.statusText}`);
+            }
+
+            const issues = await response.json();
+            
+            if (issues.length > 0) {
+                console.log('GitHub中没有logo数据，使用本地数据');
+                return;
+            }
+
+            const githubLogos = issues.map(issue => {
+                try {
+                    const data = JSON.parse(issue.body);
+                    return {
+                        ...data,
+                        githubIssueId: issue.id,
+                        githubIssueNumber: issue.number
+                    };
+                } catch (e) {
+                    console.error('解析Issue数据失败:', issue.number, e);
+                    return null;
+                }
+            }).filter(logo => logo !== null);
+
+            if (githubLogos.length > 0) {
+                this.logos = githubLogos;
+                this.saveLogos();
+                this.renderLogos();
+                this.updateCategoryFilters();
+                console.log(`成功从GitHub加载了 ${githubLogos.length} 个logo`);
+            }
+        } catch (error) {
+            console.error('从GitHub加载数据失败:', error);
+            throw error;
         }
     }
 
     async saveToGitHub() {
         const { username, repo, token } = this.githubConfig;
+        let successCount = 0;
+        let failCount = 0;
         
         for (const logo of this.logos) {
-            const logoData = {
-                id: logo.id,
-                name: logo.name,
-                category: logo.category,
-                description: logo.description,
-                image: logo.image,
-                createdAt: logo.createdAt
-            };
+            try {
+                const logoData = {
+                    id: logo.id,
+                    name: logo.name,
+                    category: logo.category,
+                    description: logo.description,
+                    image: logo.image,
+                    createdAt: logo.createdAt
+                };
 
-            if (logo.githubIssueNumber) {
-                await fetch(`https://api.github.com/repos/${username}/${repo}/issues/${logo.githubIssueNumber}`, {
-                    method: 'PATCH',
-                    headers: {
-                        'Authorization': `token ${token}`,
-                        'Content-Type': 'application/json',
-                        'Accept': 'application/vnd.github.v3+json'
-                    },
-                    body: JSON.stringify({
-                        body: JSON.stringify(logoData)
-                    })
-                });
-            } else {
-                const response = await fetch(`https://api.github.com/repos/${username}/${repo}/issues`, {
-                    method: 'POST',
-                    headers: {
-                        'Authorization': `token ${token}`,
-                        'Content-Type': 'application/json',
-                        'Accept': 'application/vnd.github.v3+json'
-                    },
-                    body: JSON.stringify({
-                        title: logo.name,
-                        body: JSON.stringify(logoData),
-                        labels: ['logos']
-                    })
-                });
+                if (logo.githubIssueNumber) {
+                    const response = await fetch(`https://api.github.com/repos/${username}/${repo}/issues/${logo.githubIssueNumber}`, {
+                        method: 'PATCH',
+                        headers: {
+                            'Authorization': `token ${token}`,
+                            'Content-Type': 'application/json',
+                            'Accept': 'application/vnd.github.v3+json'
+                        },
+                        body: JSON.stringify({
+                            body: JSON.stringify(logoData)
+                        })
+                    });
 
-                if (response.ok) {
-                    const issue = await response.json();
-                    logo.githubIssueId = issue.id;
-                    logo.githubIssueNumber = issue.number;
+                    if (response.ok) {
+                        const issue = await response.json();
+                        logo.githubIssueId = issue.id;
+                        logo.githubIssueNumber = issue.number;
+                        successCount++;
+                    } else {
+                        const errorData = await response.json().catch(() => ({}));
+                        console.error(`更新Issue ${logo.githubIssueNumber} 失败:`, errorData);
+                        failCount++;
+                    }
+                } else {
+                    const response = await fetch(`https://api.github.com/repos/${username}/${repo}/issues`, {
+                        method: 'POST',
+                        headers: {
+                            'Authorization': `token ${token}`,
+                            'Content-Type': 'application/json',
+                            'Accept': 'application/vnd.github.v3+json'
+                        },
+                        body: JSON.stringify({
+                            title: logo.name,
+                            body: JSON.stringify(logoData),
+                            labels: ['logos']
+                        })
+                    });
+
+                    if (response.ok) {
+                        const issue = await response.json();
+                        logo.githubIssueId = issue.id;
+                        logo.githubIssueNumber = issue.number;
+                        successCount++;
+                    } else {
+                        const errorData = await response.json().catch(() => ({}));
+                        console.error(`创建Issue失败:`, errorData);
+                        failCount++;
+                    }
                 }
+            } catch (error) {
+                console.error(`同步logo ${logo.id} 失败:`, error);
+                failCount++;
             }
         }
 
         this.saveLogos();
+        
+        if (failCount > 0) {
+            throw new Error(`同步失败: ${failCount} 个logo同步失败，${successCount} 个成功`);
+        }
+        
+        console.log(`同步完成: ${successCount} 个成功，${failCount} 个失败`);
     }
 
     showSyncStatus(message, type = 'info') {
@@ -379,6 +435,41 @@ class LogoCollection {
 
     hideSyncStatus() {
         document.getElementById('syncStatus').style.display = 'none';
+    }
+
+    showDebugInfo() {
+        const debugPanel = document.getElementById('debugPanel');
+        const debugContent = document.getElementById('debugContent');
+        
+        let info = [];
+        
+        info.push(`📊 数据统计`);
+        info.push(`本地logo数量: ${this.logos.length}`);
+        info.push(`自定义分类数量: ${Object.keys(this.customCategories).length}`);
+        info.push(`GitHub配置: ${this.githubConfig ? '已配置' : '未配置'}`);
+        
+        if (this.githubConfig) {
+            info.push(`\n🔧 GitHub配置`);
+            info.push(`用户名: ${this.githubConfig.username}`);
+            info.push(`仓库: ${this.githubConfig.repo}`);
+            info.push(`Token: ${this.githubConfig.token.substring(0, 10)}...`);
+        }
+        
+        info.push(`\n💾 存储状态`);
+        info.push(`localStorage logos: ${localStorage.getItem('logos') ? '存在' : '不存在'}`);
+        info.push(`localStorage categories: ${localStorage.getItem('customCategories') ? '存在' : '不存在'}`);
+        info.push(`localStorage config: ${localStorage.getItem('githubConfig') ? '存在' : '不存在'}`);
+        
+        info.push(`\n🌐 浏览器信息`);
+        info.push(`User Agent: ${navigator.userAgent}`);
+        info.push(`语言: ${navigator.language}`);
+        
+        info.push(`\n📝 最近操作`);
+        const lastUpload = this.logos.length > 0 ? this.logos[0].createdAt : '无';
+        info.push(`最后上传: ${lastUpload}`);
+        
+        debugContent.innerHTML = info.map(item => `<div>${item}</div>`).join('');
+        debugPanel.style.display = 'block';
     }
 }
 

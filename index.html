@@ -34,6 +34,7 @@
 
             <button id="uploadBtn" class="btn-primary">➕ 上传Logo</button>
             <button id="syncBtn" class="btn-secondary">🔄 同步数据</button>
+            <button id="debugBtn" class="btn-secondary" style="background: #6b7280;">🔍 调试</button>
         </section>
 
         <section id="logoGrid" class="logo-grid">
@@ -129,6 +130,14 @@
         <div class="sync-status-content">
             <div class="sync-spinner"></div>
             <span id="syncStatusText">正在同步...</span>
+        </div>
+    </div>
+
+    <div id="debugPanel" class="debug-panel" style="display: none;">
+        <div class="debug-panel-content">
+            <h3>🔍 调试信息</h3>
+            <div id="debugContent"></div>
+            <button id="closeDebug" class="btn-secondary">关闭</button>
         </div>
     </div>
 
