@@ -2,6 +2,7 @@ class LogoCollection {
     constructor() {
         this.logos = JSON.parse(localStorage.getItem('logos')) || [];
         this.customCategories = JSON.parse(localStorage.getItem('customCategories')) || {};
+        this.githubConfig = JSON.parse(localStorage.getItem('githubConfig')) || null;
         this.init();
     }
 
@@ -18,7 +19,9 @@ class LogoCollection {
         });
         document.getElementById('categoryFilter').addEventListener('change', () => this.filterLogos());
         document.getElementById('uploadBtn').addEventListener('click', () => this.openUploadModal());
+        document.getElementById('syncBtn').addEventListener('click', () => this.syncData());
         document.getElementById('uploadForm').addEventListener('submit', (e) => this.handleUpload(e));
+        document.getElementById('configForm').addEventListener('submit', (e) => this.saveGithubConfig(e));
         document.getElementById('logoImage').addEventListener('change', (e) => this.previewImage(e));
         document.getElementById('logoCategory').addEventListener('change', (e) => this.handleCategoryChange(e));
         
@@ -234,6 +237,148 @@ class LogoCollection {
 
     saveLogos() {
         localStorage.setItem('logos', JSON.stringify(this.logos));
+    }
+
+    saveGithubConfig(e) {
+        e.preventDefault();
+        
+        const username = document.getElementById('githubUsername').value.trim();
+        const repo = document.getElementById('githubRepo').value.trim();
+        const token = document.getElementById('githubToken').value.trim();
+
+        if (!username || !repo || !token) {
+            alert('请填写所有配置信息');
+            return;
+        }
+
+        this.githubConfig = { username, repo, token };
+        localStorage.setItem('githubConfig', JSON.stringify(this.githubConfig));
+        
+        document.getElementById('configModal').style.display = 'none';
+        alert('GitHub配置已保存！点击"同步数据"按钮开始同步。');
+    }
+
+    async syncData() {
+        if (!this.githubConfig) {
+            document.getElementById('configModal').style.display = 'block';
+            return;
+        }
+
+        this.showSyncStatus('正在同步数据...');
+        
+        try {
+            await this.loadFromGitHub();
+            await this.saveToGitHub();
+            this.showSyncStatus('同步完成！', 'success');
+            setTimeout(() => this.hideSyncStatus(), 2000);
+        } catch (error) {
+            console.error('同步失败:', error);
+            this.showSyncStatus('同步失败: ' + error.message, 'error');
+            setTimeout(() => this.hideSyncStatus(), 3000);
+        }
+    }
+
+    async loadFromGitHub() {
+        const { username, repo, token } = this.githubConfig;
+        const response = await fetch(`https://api.github.com/repos/${username}/${repo}/issues?labels=logos&state=all&per_page=100`, {
+            headers: {
+                'Authorization': `token ${token}`,
+                'Accept': 'application/vnd.github.v3+json'
+            }
+        });
+
+        if (!response.ok) {
+            throw new Error('无法加载数据，请检查配置');
+        }
+
+        const issues = await response.json();
+        
+        if (issues.length > 0) {
+            const githubLogos = issues.map(issue => {
+                const data = JSON.parse(issue.body);
+                return {
+                    ...data,
+                    githubIssueId: issue.id,
+                    githubIssueNumber: issue.number
+                };
+            });
+
+            this.logos = githubLogos;
+            this.saveLogos();
+            this.renderLogos();
+            this.updateCategoryFilters();
+        }
+    }
+
+    async saveToGitHub() {
+        const { username, repo, token } = this.githubConfig;
+        
+        for (const logo of this.logos) {
+            const logoData = {
+                id: logo.id,
+                name: logo.name,
+                category: logo.category,
+                description: logo.description,
+                image: logo.image,
+                createdAt: logo.createdAt
+            };
+
+            if (logo.githubIssueNumber) {
+                await fetch(`https://api.github.com/repos/${username}/${repo}/issues/${logo.githubIssueNumber}`, {
+                    method: 'PATCH',
+                    headers: {
+                        'Authorization': `token ${token}`,
+                        'Content-Type': 'application/json',
+                        'Accept': 'application/vnd.github.v3+json'
+                    },
+                    body: JSON.stringify({
+                        body: JSON.stringify(logoData)
+                    })
+                });
+            } else {
+                const response = await fetch(`https://api.github.com/repos/${username}/${repo}/issues`, {
+                    method: 'POST',
+                    headers: {
+                        'Authorization': `token ${token}`,
+                        'Content-Type': 'application/json',
+                        'Accept': 'application/vnd.github.v3+json'
+                    },
+                    body: JSON.stringify({
+                        title: logo.name,
+                        body: JSON.stringify(logoData),
+                        labels: ['logos']
+                    })
+                });
+
+                if (response.ok) {
+                    const issue = await response.json();
+                    logo.githubIssueId = issue.id;
+                    logo.githubIssueNumber = issue.number;
+                }
+            }
+        }
+
+        this.saveLogos();
+    }
+
+    showSyncStatus(message, type = 'info') {
+        const statusDiv = document.getElementById('syncStatus');
+        const statusText = document.getElementById('syncStatusText');
+        
+        statusText.textContent = message;
+        statusDiv.style.display = 'flex';
+        
+        if (type === 'success') {
+            statusDiv.style.background = '#10b981';
+        } else if (type === 'error') {
+            statusDiv.style.background = '#ef4444';
+        } else {
+            statusDiv.style.background = '#6366f1';
+        }
+    }
+
+    hideSyncStatus() {
+        document.getElementById('syncStatus').style.display = 'none';
     }
 }
 
